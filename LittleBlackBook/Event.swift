@@ -2,18 +2,38 @@ import Foundation
 import SwiftData
 
 @Model
-final class Event {
-    var title: String
-    var date: Date
-    var notes: String?
-    
-    @Relationship(inverse: \Contact.events)
-    var contacts: [Contact] = []
+final class Event: Identifiable {
+    @Attribute(.unique) var id: UUID = UUID()
 
-    init(title: String, date: Date = .now, notes: String? = nil, contacts: [Contact] = []) {
+    // Basic event info mirroring common EventKit fields
+    var title: String
+    var notes: String?
+    var location: String?
+    var isAllDay: Bool
+    var startDate: Date
+    var endDate: Date?
+    
+    @Relationship(deleteRule: .nullify)
+    var contacts: [ContactRecord] = []
+
+    init(
+        id: UUID = UUID(),
+        title: String,
+        notes: String? = nil,
+        location: String? = nil,
+        isAllDay: Bool = false,
+        startDate: Date = .now,
+        endDate: Date? = nil,
+        contacts: [ContactRecord] = []
+    ) {
+        self.id = id
         self.title = title
-        self.date = date
         self.notes = notes
+        self.location = location
+        self.isAllDay = isAllDay
+        self.startDate = startDate
+        self.endDate = endDate
         self.contacts = contacts
     }
 }
+

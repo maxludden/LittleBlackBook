@@ -2,136 +2,230 @@
 //  ContactsView.swift
 //  LittleBlackBook
 //
-//  Created by Maxwell Ludden on 2/15/26.
+//  Updated to use ContactRecord
 //
 
 import SwiftUI
 import SwiftData
 import Contacts
-import ContactsUI
-import Photos
-import MediaPlayer
 
 struct ContactsView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: [SortDescriptor(\Person.lastName), SortDescriptor(\Person.firstName)]) private var people: [Person]
+    @Query private var contacts: [ContactRecord]
 
     @State private var showingCNPicker = false
-    @State private var showingPhotoPicker = false
 
     var body: some View {
         List {
-            ForEach(people) { person in
-                NavigationLink(value: person.id) {
+            ForEach(contacts) { record in
+                NavigationLink(value: record.id) {
+                    let cn = record.toCNMutableContact()
                     VStack(alignment: .leading) {
-                        Text(fullName(for: person)).font(.headline)
-                        if !person.nickname.isEmpty { Text(person.nickname).foregroundStyle(.secondary) }
-                        if let firstEmail = person.emails.first { Text(firstEmail).foregroundStyle(.secondary) }
+                        Text("\(cn.givenName) \(cn.familyName)")
+                            .font(.headline)
+                        Text(record.position.rawValue)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
-            .onDelete(perform: deletePeople)
+            .onDelete(perform: deleteContacts)
         }
         .navigationDestination(for: UUID.self) { id in
-            if let person = people.first(where: { $0.id == id }) {
-                PersonDetailView(person: person)
+            if let record = contacts.first(where: { $0.id == id }) {
+                ContactDetailView(record: record)
             } else {
                 Text("Contact not found")
             }
         }
         .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                Menu {
-                    Button("Import from Contacts", action: { showingCNPicker = true })
-                    Button("Add New Contact", action: addPerson)
-                    Button("Import from Photos", action: { showingPhotoPicker = true })
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showingCNPicker = true
                 } label: {
-                    Label("Add", systemImage: "plus")
+                    Label("Import", systemImage: "person.crop.circle.badge.plus")
                 }
             }
             ToolbarItem(placement: .topBarLeading) { EditButton() }
         }
         .sheet(isPresented: $showingCNPicker) {
-            // Placeholder for CNContactPickerViewController via UIViewControllerRepresentable
             ContactPickerSheet { imported in
                 importCNContacts(imported)
                 showingCNPicker = false
             }
         }
-        .sheet(isPresented: $showingPhotoPicker) {
-            // Placeholder for Photo Importer
-            PhotoImportSheet { importedPersons in
-                for person in importedPersons {
-                    modelContext.insert(person)
-                }
-                showingPhotoPicker = false
-            }
-        }
     }
 
-    private func fullName(for p: Person) -> String {
-        let space = (!p.firstName.isEmpty && !p.lastName.isEmpty) ? " " : ""
-        let base = p.firstName + space + p.lastName
-        return base.isEmpty ? "Untitled" : base
-    }
-
-    private func addPerson() {
+    private func deleteContacts(at offsets: IndexSet) {
         withAnimation {
-            let p = Person()
-            modelContext.insert(p)
+            for index in offsets { modelContext.delete(contacts[index]) }
         }
     }
 
-    private func deletePeople(at offsets: IndexSet) {
-        withAnimation {
-            for index in offsets { modelContext.delete(people[index]) }
-        }
-    }
-
-    private func importCNContacts(_ contacts: [CNContact]) {
-        for c in contacts {
-            let person = Person(
-                firstName: c.givenName,
-                lastName: c.familyName,
-                nickname: c.nickname,
-                organizationName: c.organizationName,
-                jobTitle: c.jobTitle,
-                emails: c.emailAddresses.map { $0.value as String },
-                phoneNumbers: c.phoneNumbers.map { $0.value.stringValue },
-                postalAddresses: c.postalAddresses.map { CNPostalAddressFormatter.string(from: $0.value, style: .mailingAddress) },
-                urls: c.urlAddresses.map { $0.value as String },
-                notes: c.note
-            )
-            modelContext.insert(person)
+    private func importCNContacts(_ imported: [CNContact]) {
+        for c in imported {
+            let rec = ContactRecord(contact: c)
+            modelContext.insert(rec)
         }
     }
 }
 
-// MARK: - Person Detail Placeholder
+struct ContactDetailView: View {
+    @Bindable var record: ContactRecord
+    @Environment(\.modelContext) private var modelContext
 
-struct PersonDetailView: View {
-    @Bindable var person: Person
+    // Local editable CNContact fields
+    @State private var givenName: String = ""
+    @State private var familyName: String = ""
+    @State private var nickname: String = ""
+    @State private var emails: [String] = []
+    @State private var phones: [String] = []
+
+    @State private var newCustomInterest: String = ""
 
     var body: some View {
         Form {
             Section("Name") {
-                TextField("First name", text: $person.firstName)
-                TextField("Last name", text: $person.lastName)
-                TextField("Nickname", text: $person.nickname)
+                TextField("First name", text: $givenName)
+                TextField("Last name", text: $familyName)
+                TextField("Nickname", text: $nickname)
+                Button("Save Name to Contact") { saveCNContactBasics() }
             }
-            Section("Contact") {
-                TextFieldArray(title: "Emails", items: $person.emails)
-                TextFieldArray(title: "Phones", items: $person.phoneNumbers)
-                TextFieldArray(title: "Addresses", items: $person.postalAddresses)
-                TextFieldArray(title: "URLs", items: $person.urls)
-                TextField("Notes", text: $person.notes, axis: .vertical)
+            Section("Contact Methods") {
+                EditableStringArray(title: "Emails", items: $emails)
+                EditableStringArray(title: "Phones", items: $phones)
+                Button("Save Methods to Contact") { saveCNContactMethods() }
+            }
+            Section("Position") {
+                Picker("Position", selection: Binding(
+                    get: { record.position },
+                    set: { record.position = $0 }
+                )) {
+                    ForEach(Position.allCases, id: \.self) { pos in
+                        Text(pos.rawValue).tag(pos)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+            Section("Interests") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Predefined")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    ForEach(PredefinedInterest.allCases, id: \.self) { interest in
+                        let isOn = record.predefinedInterests.contains(interest)
+                        Toggle(interest.rawValue, isOn: Binding(
+                            get: { isOn },
+                            set: { on in
+                                var current = record.predefinedInterests
+                                if on {
+                                    if !current.contains(interest) { current.append(interest) }
+                                } else {
+                                    current.removeAll { $0 == interest }
+                                }
+                                record.predefinedInterests = current
+                            }
+                        ))
+                    }
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Custom")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    HStack {
+                        TextField("Add interest", text: $newCustomInterest)
+                        Button("Add") {
+                            record.addCustomInterest(newCustomInterest)
+                            newCustomInterest = ""
+                        }
+                        .disabled(newCustomInterest.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                    if record.customInterests.isEmpty {
+                        Text("No custom interests")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(record.customInterests, id: \.self) { item in
+                            HStack {
+                                Text(item)
+                                Spacer()
+                                Button(role: .destructive) {
+                                    record.removeCustomInterest(item)
+                                } label: {
+                                    Image(systemName: "trash")
+                                }
+                                .buttonStyle(.borderless)
+                            }
+                        }
+                    }
+                }
+            }
+            Section("Events") {
+                if record.events.isEmpty {
+                    Text("No linked events")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(record.events) { event in
+                        HStack {
+                            VStack(alignment: .leading) {
+                                Text(event.title)
+                                    .font(.headline)
+                                Text(event.startDate.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button(role: .destructive) { unlink(event: event) } label: {
+                                Image(systemName: "link.badge.minus")
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                    }
+                }
+                NavigationLink("Link Events") { EventLinkerView(record: record) }
             }
         }
-        .navigationTitle("Edit Contact")
+        .navigationTitle("Contact")
+        .onAppear(perform: loadFromCNContact)
+    }
+
+    private func loadFromCNContact() {
+        let cn = record.toCNMutableContact()
+        givenName = cn.givenName
+        familyName = cn.familyName
+        nickname = cn.nickname
+        emails = cn.emailAddresses.map { $0.value as String }
+        phones = cn.phoneNumbers.map { $0.value.stringValue }
+    }
+
+    private func saveCNContactBasics() {
+        var cn = record.toCNMutableContact()
+        cn.givenName = givenName
+        cn.familyName = familyName
+        cn.nickname = nickname
+        record.updateWrappedContact(from: cn)
+    }
+
+    private func saveCNContactMethods() {
+        var cn = record.toCNMutableContact()
+        cn.emailAddresses = emails.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .map { CNLabeledValue(label: CNLabelHome, value: NSString(string: $0)) }
+        cn.phoneNumbers = phones.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .map { CNLabeledValue(label: CNLabelPhoneNumberMobile, value: CNPhoneNumber(stringValue: $0)) }
+        record.updateWrappedContact(from: cn)
+    }
+
+    private func unlink(event: Event) {
+        if let idx = record.events.firstIndex(where: { $0.id == event.id }) {
+            record.events.remove(at: idx)
+        }
+        if let cidx = event.contacts.firstIndex(where: { $0.id == record.id }) {
+            event.contacts.remove(at: cidx)
+        }
     }
 }
 
-struct TextFieldArray: View {
+// Reusable small component for editing arrays of strings
+struct EditableStringArray: View {
     let title: String
     @Binding var items: [String]
 
@@ -153,47 +247,64 @@ struct TextFieldArray: View {
     }
 }
 
-// MARK: - CNContact Picker placeholder implementation
+struct EventLinkerView: View {
+    @Bindable var record: ContactRecord
+    @Environment(\.modelContext) private var modelContext
+    @Query(sort: [SortDescriptor(\Event.startDate, order: .forward)]) private var allEvents: [Event]
 
+    var body: some View {
+        List {
+            ForEach(allEvents) { event in
+                let linked = event.contacts.contains { $0.id == record.id }
+                HStack {
+                    VStack(alignment: .leading) {
+                        Text(event.title)
+                        Text(event.startDate.formatted(date: .abbreviated, time: .shortened))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if linked {
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                    }
+                }
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    toggleLink(event)
+                }
+            }
+        }
+        .navigationTitle("Link Events")
+    }
+
+    private func toggleLink(_ event: Event) {
+        if let idx = event.contacts.firstIndex(where: { $0.id == record.id }) {
+            event.contacts.remove(at: idx)
+        } else {
+            event.contacts.append(record)
+        }
+    }
+}
+
+// Placeholder CNContact picker; replace with real UI when needed
 struct ContactPickerSheet: View {
     var onPick: ([CNContact]) -> Void
 
     var body: some View {
         VStack(spacing: 16) {
             Text("Contact Picker Placeholder")
-            Text("Replace with CNContactPickerViewController when ready.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-            Button("Import Sample") {
-                onPick([])
-            }
-            Button("Close") {
-                onPick([])
-            }
+            Button("Import Sample (Empty)") { onPick([]) }
+            Button("Close") { onPick([]) }
         }
         .padding()
     }
 }
 
-// MARK: - Photo Importer placeholder implementation
-
-struct PhotoImportSheet: View {
-    var onImport: ([Person]) -> Void
-
-    var body: some View {
-        VStack(spacing: 16) {
-            Text("Photo Import Placeholder")
-            Text("Replace with photo analysis/import logic when ready.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-            Button("Import Sample") {
-                onImport([])
-            }
-            Button("Close") {
-                onImport([])
-            }
-        }
-        .padding()
+#Preview {
+    NavigationStack {
+        ContactsView()
     }
+    .modelContainer(for: [ContactRecord.self, Event.self], inMemory: true)
 }
+
 
