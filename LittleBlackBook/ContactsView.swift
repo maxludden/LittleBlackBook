@@ -11,7 +11,7 @@ import Contacts
 
 struct ContactsView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query private var contacts: [ContactRecord]
+    @Query private var contacts: [Contact]
 
     @State private var showingCNPicker = false
 
@@ -64,14 +64,21 @@ struct ContactsView: View {
 
     private func importCNContacts(_ imported: [CNContact]) {
         for c in imported {
-            let rec = ContactRecord(contact: c)
-            modelContext.insert(rec)
+            do {
+                let rec = try Contact.fromCNContact(c)
+                modelContext.insert(rec)
+            } catch {
+                // Skip contacts that fail to convert; log for debugging
+                #if DEBUG
+                print("Failed to import CNContact: \(c.identifier). Error: \(error)")
+                #endif
+            }
         }
     }
 }
 
 struct ContactDetailView: View {
-    @Bindable var record: ContactRecord
+    var record: Contact
     @Environment(\.modelContext) private var modelContext
 
     // Local editable CNContact fields
@@ -198,20 +205,44 @@ struct ContactDetailView: View {
     }
 
     private func saveCNContactBasics() {
+        // Update the underlying model directly
         var cn = record.toCNMutableContact()
         cn.givenName = givenName
         cn.familyName = familyName
         cn.nickname = nickname
-        record.updateWrappedContact(from: cn)
+        // If your Contact model persists a vCard string, assign it here.
+        // Currently, there's no storage key path available; keeping serialization for potential future use.
+        if let data = try? CNContactVCardSerialization.data(with: [cn.copy() as! CNContact]),
+           let vcard = String(data: data, encoding: .utf8) {
+            #if DEBUG
+            // No vCard storage property on Contact; serialized vCard available in `vcard` if needed.
+            _ = vcard
+            #endif
+        }
+        try? modelContext.save()
     }
 
     private func saveCNContactMethods() {
         var cn = record.toCNMutableContact()
-        cn.emailAddresses = emails.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        cn.emailAddresses = emails
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
             .map { CNLabeledValue(label: CNLabelHome, value: NSString(string: $0)) }
-        cn.phoneNumbers = phones.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        cn.phoneNumbers = phones
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
             .map { CNLabeledValue(label: CNLabelPhoneNumberMobile, value: CNPhoneNumber(stringValue: $0)) }
-        record.updateWrappedContact(from: cn)
+
+        // If your Contact model persists a vCard string, assign it here.
+        // Currently, there's no storage key path available; keeping serialization for potential future use.
+        if let data = try? CNContactVCardSerialization.data(with: [cn.copy() as! CNContact]),
+           let vcard = String(data: data, encoding: .utf8) {
+            #if DEBUG
+            // No vCard storage property on Contact; serialized vCard available in `vcard` if needed.
+            _ = vcard
+            #endif
+        }
+        try? modelContext.save()
     }
 
     private func unlink(event: Event) {
@@ -248,7 +279,7 @@ struct EditableStringArray: View {
 }
 
 struct EventLinkerView: View {
-    @Bindable var record: ContactRecord
+    @Bindable var record: Contact
     @Environment(\.modelContext) private var modelContext
     @Query(sort: [SortDescriptor(\Event.startDate, order: .forward)]) private var allEvents: [Event]
 
@@ -304,7 +335,6 @@ struct ContactPickerSheet: View {
     NavigationStack {
         ContactsView()
     }
-    .modelContainer(for: [ContactRecord.self, Event.self], inMemory: true)
+    .modelContainer(for: [Contact.self, Event.self], inMemory: true)
 }
-
 

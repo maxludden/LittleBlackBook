@@ -32,5 +32,5 @@ struct ContentView: View {
 
 #Preview {
     ContentView()
-        .modelContainer(for: [Person.self, EventItem.self], inMemory: true)
+        .modelContainer(for: [Contact.self, Event.self], inMemory: true)
 }

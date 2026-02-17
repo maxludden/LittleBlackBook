@@ -3,25 +3,36 @@ import SwiftData
 
 struct CalendarView: View {
     @Environment(\.modelContext) private var context
-    @Query(sort: [SortDescriptor(\Event.date, order: .forward)]) private var events: [Event]
-    @Query(sort: [SortDescriptor(\Contact.lastName), SortDescriptor(\Contact.firstName)]) private var contacts: [Contact]
+    @Query(sort: [SortDescriptor(\Event.startDate, order: .forward)]) private var events: [Event]
+    @Query(sort: [SortDescriptor(\Contact.givenName, order: .forward), SortDescriptor(\Contact.familyName, order: .forward)]) private var contacts: [Contact]
 
     var body: some View {
         NavigationStack {
-            List {
-                ForEach(events) { event in
-                    VStack(alignment: .leading) {
-                        Text(event.title).font(.headline)
-                        Text(event.date.formatted(date: .abbreviated, time: .shortened))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        if !event.contacts.isEmpty {
-                            Text("Contacts: " + event.contacts.map { "\($0.firstName) \($0.lastName)" }.joined(separator: ", "))
-                                .font(.subheadline)
-                        }
+            List(events) { event in
+                VStack(alignment: .leading) {
+                    Text(event.title).font(.headline)
+                    Text(event.startDate.formatted(date: .abbreviated, time: .shortened))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if !event.contacts.isEmpty {
+                        Text("Contacts: " + event.contacts.map { (contact) in
+                            let given = contact.givenName ?? ""
+                            let family = contact.familyName ?? ""
+                            let full = [given, family].filter { !$0.isEmpty }.joined(separator: " ")
+                            return full
+                        }.filter { !$0.isEmpty }.joined(separator: ", "))
+                            .font(.subheadline)
                     }
                 }
-                .onDelete(perform: delete)
+                .swipeActions {
+                    Button(role: .destructive) {
+                        if let idx = events.firstIndex(of: event) {
+                            delete(at: IndexSet(integer: idx))
+                        }
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                }
             }
             .navigationTitle("Calendar")
             .toolbar {
@@ -35,7 +46,7 @@ struct CalendarView: View {
     private func addSampleEvent() {
         var associated: [Contact] = []
         if let first = contacts.first { associated = [first] }
-        let event = Event(title: "Meeting", date: .now.addingTimeInterval(3600), notes: "Discuss roadmap", contacts: associated)
+        let event = Event(title: "Hookup", notes: "Discuss roadmap", startDate: Date.now.addingTimeInterval(3600), contacts: associated)
         context.insert(event)
         try? context.save()
     }

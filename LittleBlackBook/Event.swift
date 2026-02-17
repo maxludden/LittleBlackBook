@@ -12,9 +12,10 @@ final class Event: Identifiable {
     var isAllDay: Bool
     var startDate: Date
     var endDate: Date?
+    var note: String?
     
     @Relationship(deleteRule: .nullify)
-    var contacts: [ContactRecord] = []
+    var contacts: [Contact] = []
 
     init(
         id: UUID = UUID(),
@@ -24,7 +25,8 @@ final class Event: Identifiable {
         isAllDay: Bool = false,
         startDate: Date = .now,
         endDate: Date? = nil,
-        contacts: [ContactRecord] = []
+        contacts: [Contact] = [],
+        note: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -34,6 +36,7 @@ final class Event: Identifiable {
         self.startDate = startDate
         self.endDate = endDate
         self.contacts = contacts
+        self.note = note
     }
 }
 
